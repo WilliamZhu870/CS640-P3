@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -140,7 +141,7 @@ public class RouteTable
 			}
 
 			// Add an entry to the route table
-			this.insert(dstIp, gwIp, maskIp, iface);
+			this.insert(dstIp, gwIp, maskIp, iface, 1);
 		}
 
 		// Close the file
@@ -156,9 +157,9 @@ public class RouteTable
 	 * @param iface router interface out which to send packets to reach the 
 	 *        destination or gateway
 	 */
-	public void insert(int dstIp, int gwIp, int maskIp, Iface iface)
+	public void insert(int dstIp, int gwIp, int maskIp, Iface iface, int metric)
 	{
-		RouteEntry entry = new RouteEntry(dstIp, gwIp, maskIp, iface);
+		RouteEntry entry = new RouteEntry(dstIp, gwIp, maskIp, iface, metric);
 		synchronized(this.entries)
 		{ 
 			this.entries.add(entry);
@@ -234,4 +235,19 @@ public class RouteTable
 			return result;
 		}
 	}
+
+	public void remove(int destination) {
+		for (int i = 0; i < this.entries.size(); i++) {
+			RouteEntry entry = this.entries.get(i);
+			if (entry.getDestinationAddress() == destination) {
+				this.entries.remove(i);
+				i--; // Decrement index to account for removal
+			}
+		}
+	}
+	
+	public List<RouteEntry> getAllEntries() {
+        return new ArrayList<>(this.entries);
+    }
+
 }

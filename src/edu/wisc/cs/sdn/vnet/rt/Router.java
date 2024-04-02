@@ -4,21 +4,14 @@ import edu.wisc.cs.sdn.vnet.Device;
 import edu.wisc.cs.sdn.vnet.DumpFile;
 import edu.wisc.cs.sdn.vnet.Iface;
 
-import edu.wisc.cs.sdn.vnet.rt.RouteEntry;
-import edu.wisc.cs.sdn.vnet.rt.RouteTable;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.IPv4;
-import net.floodlightcontroller.packet.Data;
 import net.floodlightcontroller.packet.UDP;
 import net.floodlightcontroller.packet.RIPv2;
 import net.floodlightcontroller.packet.RIPv2Entry;
 
 import java.util.Timer;
 import java.util.TimerTask;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * @author Aaron Gember-Jacobson and Anubhavnidhi Abhashkumar
@@ -30,9 +23,10 @@ public class Router extends Device {
 	/** ARP cache for the router */
 	private ArpCache arpCache;
 
-	private static final long RIP_RESPONSE_INTERVAL = 10000; // 10 seconds
-	private static final long ROUTE_TIMEOUT_INTERVAL = 30000; // 30 seconds
-	private static final int RIP_PORT = UDP.RIP_PORT;
+	//Variables used in calculating validity in routes. 
+	private static final long RIP_RESPONSE_INTERVAL = 10000;
+	private static final long ROUTE_TIMEOUT_INTERVAL = 30000;
+	private static final int RIP_PORT = UDP.RIP_PORT; //Makes referencing this easier.
 
 	/**
 	 * Creates a router for a specific host.
@@ -43,8 +37,10 @@ public class Router extends Device {
 		super(host, logfile);
 		this.routeTable = new RouteTable();
 		this.arpCache = new ArpCache();
+		
+		//Initialize routing table and start timer
 		initializeRoutingTable();
-		startRip();
+		startRouteTimeoutTimer();
 	}
 
 	/**
@@ -123,11 +119,13 @@ public class Router extends Device {
 		IPv4 ipPacket = (IPv4) etherPacket.getPayload();
 		System.out.println("Handle IP packet");
 
+		//RIP packet.
 		if (ipPacket.getProtocol() == IPv4.PROTOCOL_UDP &&
 				((UDP) ipPacket.getPayload()).getDestinationPort() == RIP_PORT) {
 			handleRipPacket(etherPacket, inIface);
 			return;
 		}
+
 		// Verify checksum
 		short origCksum = ipPacket.getChecksum();
 		ipPacket.resetChecksum();
@@ -158,7 +156,10 @@ public class Router extends Device {
 		this.forwardIpPacket(etherPacket, inIface);
 	}
 
+	//Handles RIP packets.
 	private void handleRipPacket(Ethernet etherPacket, Iface inIface) {
+		
+		//IDK what these actually do - just reused code from handleIpPacket.
 		IPv4 ipPacket = (IPv4) etherPacket.getPayload();
 		UDP udpPacket = (UDP) ipPacket.getPayload();
 		RIPv2 ripPacket = (RIPv2) udpPacket.getPayload();
@@ -166,65 +167,63 @@ public class Router extends Device {
 		// Update routing table based on RIP packet
 		for (RIPv2Entry entry : ripPacket.getEntries()) {
 			int subnet = entry.getAddress() & entry.getSubnetMask();
-			int metric = entry.getMetric() + 1; // Adding 1 to metric for hop count
-			int nextHop = ipPacket.getSourceAddress(); // Next hop is the source of the RIP packet
+			int metric = entry.getMetric() + 1; //Add 1 to the hop count.
+			int nextHop = ipPacket.getSourceAddress();
 
-			// Lookup existing route entry for the subnet
+			//Check existing entry.
 			RouteEntry existingEntry = this.routeTable.lookup(subnet);
 
-			// If no existing entry, or new entry has lower metric, or entry has timed out,
-			// update routing table
+			//Update routing table
 			if (existingEntry == null || metric < existingEntry.getMetric() || existingEntry.isExpired()) {
-				// Insert or update the route entry
 				this.routeTable.insert(subnet, nextHop, entry.getSubnetMask(), inIface, metric);
 
-				// If the route entry is updated, reset the timeout
+				//Reset the timeout
 				RouteEntry updatedEntry = this.routeTable.lookup(subnet);
 				updatedEntry.resetTimer();
 			}
 		}
 
-		// Send RIP response if necessary
+		//Had a lot of issues here - asked for help from ChatGPT (don't know if it actually does anything.)
 		if (ripPacket.getCommand() == RIPv2.COMMAND_REQUEST) {
 			sendRipResponse(inIface);
 		}
 	}
 
 	private void sendRipResponse(Iface inIface) {
-		// Construct RIP response packet
 		Ethernet ether = new Ethernet();
 		IPv4 ipPacket = new IPv4();
 		UDP udpPacket = new UDP();
 		RIPv2 ripPacket = new RIPv2();
-
-		// Populate RIP response packet
-
-		// Set destination IP and MAC to multicast and broadcast respectively
-		ether.setDestinationMACAddress("FF:FF:FF:FF:FF:FF");
-		ipPacket.setDestinationAddress("224.0.0.9");
-
-		// Set source IP and MAC to interface IP and MAC
+	
+	
+		// Check if the interface is null
+		if (inIface == null) {
+			return;
+		}
+	
+		// Set destination IP to multicast and MAC to broadcast if inIface is null
+		if (inIface.getIpAddress() == 0 || inIface.getMacAddress() == null) {
+			ether.setDestinationMACAddress("FF:FF:FF:FF:FF:FF");
+			ipPacket.setDestinationAddress("224.0.0.9");
+		} else {
+			// Set destination IP and MAC to the IP address and MAC address of the router interface that sent the request as specified in the assignemnt.
+			ether.setDestinationMACAddress(inIface.getMacAddress().toBytes());
+			ipPacket.setDestinationAddress(inIface.getIpAddress());
+		}
+	
+		// Set source IP and MAC to interface IP and MAC (got help from ChatGPT for this)
 		ether.setSourceMACAddress(inIface.getMacAddress().toBytes());
 		ipPacket.setSourceAddress(inIface.getIpAddress());
-
-		// Set UDP source and destination ports to RIP port
-		udpPacket.setSourcePort(RIP_PORT);
-		udpPacket.setDestinationPort(RIP_PORT);
-
-		// Set RIP command to RESPONSE
+		udpPacket.setSourcePort((short) RIP_PORT);
+		udpPacket.setDestinationPort((short) RIP_PORT);
 		ripPacket.setCommand(RIPv2.COMMAND_RESPONSE);
-
-		// Add RIP entries for reachable subnets via this router
-
-		// Send packet out through the interface
 		sendPacket(ether, inIface);
 	}
-
+	
+	//Sends out requests to set everything up & sends unsolicited Rip responses regularly.
 	public void startRip() {
-		// Send RIP request out all interfaces when initialized
 		sendRipRequest();
 
-		// Send unsolicited RIP response every RIP_RESPONSE_INTERVAL seconds
 		Timer timer = new Timer();
 		timer.scheduleAtFixedRate(new TimerTask() {
 			@Override
@@ -234,49 +233,40 @@ public class Router extends Device {
 		}, RIP_RESPONSE_INTERVAL, RIP_RESPONSE_INTERVAL);
 	}
 
+	//Sends RIP Request
 	private void sendRipRequest() {
-		// Construct RIP request packet
 		Ethernet ether = new Ethernet();
 		IPv4 ipPacket = new IPv4();
 		UDP udpPacket = new UDP();
 		RIPv2 ripPacket = new RIPv2();
 
-		// Populate RIP request packet
-
-		// Set destination IP to multicast and MAC to broadcast
+		// Set destination IP to multicast and MAC to broadcast as specified in the assignment
 		ether.setDestinationMACAddress("FF:FF:FF:FF:FF:FF");
 		ipPacket.setDestinationAddress("224.0.0.9");
 
 		// Set source IP and MAC to interface IP and MAC
-		// Send request out all interfaces
 		for (Iface iface : this.interfaces.values()) {
 			ether.setSourceMACAddress(iface.getMacAddress().toBytes());
 			ipPacket.setSourceAddress(iface.getIpAddress());
-
-			// Set UDP source and destination ports to RIP port
-			udpPacket.setSourcePort(RIP_PORT);
-			udpPacket.setDestinationPort(RIP_PORT);
-
-			// Set RIP command to REQUEST
+			udpPacket.setSourcePort((short)RIP_PORT);
+			udpPacket.setDestinationPort((short)RIP_PORT);
 			ripPacket.setCommand(RIPv2.COMMAND_REQUEST);
-
-			// Send packet out through the interface
 			sendPacket(ether, iface);
 		}
 	}
 
+	//Sends unsolicited RIP response out all interfaces
 	private void sendUnsolicitedRipResponse() {
-		// Send unsolicited RIP response out all interfaces
 		for (Iface iface : this.interfaces.values()) {
 			sendRipResponse(iface);
 		}
 	}
 
+	//Initializes the routing table.
 	private void initializeRoutingTable() {
-		// Add entries for directly reachable subnets via router's interfaces
 		for (Iface iface : this.interfaces.values()) {
 			int subnet = calculateSubnet(iface.getIpAddress(), iface.getSubnetMask());
-			this.routeTable.insert(subnet, 0, iface.getSubnetMask(), iface);
+			this.routeTable.insert(subnet, 0, iface.getSubnetMask(), iface, 1);
 		}
 	}
 
@@ -327,4 +317,42 @@ public class Router extends Device {
 
 		this.sendPacket(etherPacket, outIface);
 	}
+
+	//Got help from ChatGPT with this - apparently it works to check route timeouts. 
+	private void startRouteTimeoutTimer() {
+        Timer timer = new Timer();
+        timer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                checkRouteTimeouts();
+            }
+        }, ROUTE_TIMEOUT_INTERVAL, ROUTE_TIMEOUT_INTERVAL);
+    }
+
+	//Used in startRouteTimeoutTimer and helps remove routes that have expired.
+	private void checkRouteTimeouts() {
+        for (RouteEntry entry : routeTable.getAllEntries()) {
+			
+			//Skip removing any directly reachable routes.
+            if (isDirectlyReachableSubnet(entry.getDestinationAddress(), entry.getMaskAddress())) {
+                continue;
+            }
+            //Remove expired routes.
+            if (entry.isExpired()) {
+                routeTable.remove(entry.getDestinationAddress());
+            }
+        }
+    }
+
+	//Used in checkRouteTimeouts to ensure that directly reachable routes do not get removed.
+    private boolean isDirectlyReachableSubnet(int destination, int mask) {
+        for (Iface iface : interfaces.values()) {
+            int subnet = calculateSubnet(iface.getIpAddress(), iface.getSubnetMask());
+            if (destination == subnet && mask == iface.getSubnetMask()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 }

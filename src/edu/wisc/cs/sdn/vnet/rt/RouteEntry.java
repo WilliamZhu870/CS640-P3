@@ -9,6 +9,9 @@ import edu.wisc.cs.sdn.vnet.Iface;
  */
 public class RouteEntry 
 {
+	private long lastUpdateTime;
+	private static final long TIMEOUT_INTERVAL = 30000; // 30 seconds
+
 	/** Destination IP address */
 	private int destinationAddress;
 	
@@ -21,6 +24,10 @@ public class RouteEntry
 	/** Router interface out which packets should be sent to reach
 	 * the destination or gateway */
 	private Iface iface;
+	
+	/** Metric */
+    private int metric;
+
 
 	/**
 	 * Create a new route table entry.
@@ -31,14 +38,16 @@ public class RouteEntry
 	 *        be sent to reach the destination or gateway
 	 */
 	public RouteEntry(int destinationAddress, int gatewayAddress, 
-			int maskAddress, Iface iface)
+			int maskAddress, Iface iface, int metric)
 	{
 		this.destinationAddress = destinationAddress;
 		this.gatewayAddress = gatewayAddress;
 		this.maskAddress = maskAddress;
 		this.iface = iface;
+		this.metric = metric;
+		this.lastUpdateTime = System.currentTimeMillis();
 	}
-	
+
 	/**
 	 * @return destination IP address
 	 */
@@ -69,6 +78,24 @@ public class RouteEntry
 
 	public void setInterface(Iface iface)
 	{ this.iface = iface; }
+
+	public int getMetric() {
+        return this.metric;
+    }
+
+    public void setMetric(int metric) {
+        this.metric = metric;
+    }
+	public boolean isExpired()
+    {
+        long currentTime = System.currentTimeMillis();
+        return (currentTime - this.lastUpdateTime) > TIMEOUT_INTERVAL;
+    }
+	
+	public void resetTimer()
+    {
+        this.lastUpdateTime = System.currentTimeMillis();
+    }
 	
 	public String toString()
 	{
